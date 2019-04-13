@@ -72,6 +72,10 @@ if(UNIX)
     endif()
 endif()
 
+find_package(OpenCV)
+INCLUDE_DIRECTORIES(${OpenCV_INCLUDE_DIRS})
+set(LIBRARIES ${LIBRARIES} ${OpenCV_LIBS})
+
 find_package(Libyuv REQUIRED)
 include_directories(SYSTEM ${YUV_INCLUDE_DIRS})
 set(LIBRARIES ${LIBRARIES} ${YUV_LIBRARIES})

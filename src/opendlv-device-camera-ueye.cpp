@@ -21,6 +21,7 @@
 #include <string>
 
 #include <X11/Xlib.h>
+#include <opencv/cv.hpp>
 #include <libyuv.h>
 
 #include "cluon-complete.hpp"
@@ -124,41 +125,44 @@ int32_t main(int32_t argc, char **argv) {
                 XMapWindow(display, window);
             }
 
+            cv::Mat cv_frame_bayerbg(roi.m_height, roi.m_width,
+                                     CV_8UC1,
+                                     const_cast<unsigned char *>(buffer.get()));
+            cv::Mat cv_frame_bgr; // (_roi.m_height, _roi.m_width, CV_8UC3);
             while (!cluon::TerminateHandler::instance().isTerminated.load()) {
-                    uint8_t *ueyeImagePtr{buffer.get()};
-                    rc = pxLCamera.getNextFrame(image_size, buffer.get());
-                    if (API_SUCCESS(rc)) {
-                        cluon::data::TimeStamp ts{cluon::time::now()};
-                        // Transform data as I420 in sharedMemoryI420.
-                        sharedMemoryI420->lock();
-                        sharedMemoryI420->setTimeStamp(ts);
-                        {
-                            libyuv::I422ToI420(reinterpret_cast<uint8_t*>(ueyeImagePtr), WIDTH,
-                                               reinterpret_cast<uint8_t*>(ueyeImagePtr+(WIDTH * HEIGHT)), WIDTH/2,
-                                               reinterpret_cast<uint8_t*>(ueyeImagePtr+(WIDTH * HEIGHT + ((WIDTH * HEIGHT) >> 2))), WIDTH/2,
-                                               reinterpret_cast<uint8_t*>(sharedMemoryI420->data()), WIDTH,
-                                               reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT)), WIDTH/2,
-                                               reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT + ((WIDTH * HEIGHT) >> 2))), WIDTH/2,
-                                               WIDTH, HEIGHT);
+                rc = pxLCamera.getNextFrame(image_size, buffer.get());
+
+                cv::cvtColor(cv_frame_bayerbg, cv_frame_bgr, CV_BayerBG2BGR); //CV_BayerRG2BGRA
+                if (API_SUCCESS(rc)) {
+                    cluon::data::TimeStamp ts{cluon::time::now()};
+                    // Transform data as I420 in sharedMemoryI420.
+                    sharedMemoryI420->lock();
+                    sharedMemoryI420->setTimeStamp(ts);
+                    {
+                        libyuv::RGB24ToI420(reinterpret_cast<uint8_t*>(cv_frame_bgr.data), WIDTH*3,
+                                           reinterpret_cast<uint8_t*>(sharedMemoryI420->data()), WIDTH,
+                                           reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT)), WIDTH/2,
+                                           reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT + ((WIDTH * HEIGHT) >> 2))), WIDTH/2,
+                                           WIDTH, HEIGHT);
+                    }
+                    sharedMemoryI420->unlock();
+
+                    sharedMemoryARGB->lock();
+                    sharedMemoryARGB->setTimeStamp(ts);
+                    {
+                        libyuv::I420ToARGB(reinterpret_cast<uint8_t*>(sharedMemoryI420->data()), WIDTH,
+                                           reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT)), WIDTH/2,
+                                           reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT + ((WIDTH * HEIGHT) >> 2))), WIDTH/2,
+                                           reinterpret_cast<uint8_t*>(sharedMemoryARGB->data()), WIDTH * 4, WIDTH, HEIGHT);
+
+                        if (VERBOSE) {
+                            XPutImage(display, window, DefaultGC(display, 0), ximage, 0, 0, 0, 0, WIDTH, HEIGHT);
                         }
-                        sharedMemoryI420->unlock();
+                    }
+                    sharedMemoryARGB->unlock();
 
-                        sharedMemoryARGB->lock();
-                        sharedMemoryARGB->setTimeStamp(ts);
-                        {
-                            libyuv::I420ToARGB(reinterpret_cast<uint8_t*>(sharedMemoryI420->data()), WIDTH,
-                                               reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT)), WIDTH/2,
-                                               reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT + ((WIDTH * HEIGHT) >> 2))), WIDTH/2,
-                                               reinterpret_cast<uint8_t*>(sharedMemoryARGB->data()), WIDTH * 4, WIDTH, HEIGHT);
-
-                            if (VERBOSE) {
-                                XPutImage(display, window, DefaultGC(display, 0), ximage, 0, 0, 0, 0, WIDTH, HEIGHT);
-                            }
-                        }
-                        sharedMemoryARGB->unlock();
-
-                        sharedMemoryI420->notifyAll();
-                        sharedMemoryARGB->notifyAll();
+                    sharedMemoryI420->notifyAll();
+                    sharedMemoryARGB->notifyAll();
                 }
             }
 
