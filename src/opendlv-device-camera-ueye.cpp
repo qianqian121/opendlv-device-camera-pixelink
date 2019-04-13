@@ -14,18 +14,19 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
-#include "cluon-complete.hpp"
-
-#include <ueye.h>
-#include <X11/Xlib.h>
-#include <libyuv.h>
-
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <memory>
 #include <string>
+
+#include <X11/Xlib.h>
+#include <libyuv.h>
+
+#include "cluon-complete.hpp"
+
+#include "pixelink/camera.h"
+#include "pixelink/pixelFormat.h"
 
 int32_t main(int32_t argc, char **argv) {
     int32_t retCode{0};
@@ -46,8 +47,8 @@ int32_t main(int32_t argc, char **argv) {
         retCode = 1;
     }
     else {
-        const uint32_t WIDTH{static_cast<uint32_t>(std::stoi(commandlineArguments["width"]))};
-        const uint32_t HEIGHT{static_cast<uint32_t>(std::stoi(commandlineArguments["height"]))};
+//        const uint32_t WIDTH{static_cast<uint32_t>(std::stoi(commandlineArguments["width"]))};
+//        const uint32_t HEIGHT{static_cast<uint32_t>(std::stoi(commandlineArguments["height"]))};
         const bool VERBOSE{commandlineArguments.count("verbose") != 0};
         const uint32_t PIXEL_CLOCK{(commandlineArguments["pixel_clock"].size() != 0) ?static_cast<uint32_t>(std::stoi(commandlineArguments["pixel_clock"])) : 10};
 
@@ -68,127 +69,107 @@ int32_t main(int32_t argc, char **argv) {
         }
 
         // Initialize camera.
-        HIDS capture{0};
-        retCode = is_InitCamera(&capture, nullptr);
-        if (IS_SUCCESS == retCode) {
-            // Configure camera.
-            char *imageMemory{nullptr};
-            int imageMemoryID{0};
-            {
-                SENSORINFO cameraInfo;
-                std::memset(&cameraInfo, 0, sizeof(SENSORINFO));
-                is_GetSensorInfo(capture, &cameraInfo);
-                std::clog << "[opendlv-device-camera-ueye]: Found IDS uEye device: '" << cameraInfo.strSensorName << "', max width = " << cameraInfo.nMaxWidth << ", max height = " << cameraInfo.nMaxHeight << std::endl;
-
-                retCode = is_PixelClock(capture, IS_PIXELCLOCK_CMD_SET, (void*)&PIXEL_CLOCK, sizeof(PIXEL_CLOCK));
-                std::clog << "[opendlv-device-camera-ueye]: Setting pixel clock: " << ((IS_SUCCESS == retCode) ? "succeeded" : "failed") << std::endl;
-
-                retCode = is_SetColorMode(capture, IS_CM_UYVY_MONO_PACKED);
-                std::clog << "[opendlv-device-camera-ueye]: Setting color mode UYVY: " << ((IS_SUCCESS == retCode) ? "succeeded" : "failed") << std::endl;
-
-                retCode = is_AllocImageMem(capture, WIDTH, HEIGHT, 8*3/2 /*bytes per pixel for UYUV422*/, &imageMemory, &imageMemoryID);
-                std::clog << "[opendlv-device-camera-ueye]: Allocating image memory: " << ((IS_SUCCESS == retCode) ? "succeeded" : "failed") << std::endl;
-
-                retCode = is_SetImageMem(capture, imageMemory, imageMemoryID);
-                std::clog << "[opendlv-device-camera-ueye]: Setting image memory: " << ((IS_SUCCESS == retCode) ? "succeeded" : "failed") << std::endl;
-
-                retCode = is_SetDisplayMode(capture, IS_SET_DM_DIB);
-                std::clog << "[opendlv-device-camera-ueye]: Setting display mode: " << ((IS_SUCCESS == retCode) ? "succeeded" : "failed") << std::endl;
-
-                double newFPS{0};
-                retCode = is_SetFrameRate(capture, FREQ, &newFPS);
-                std::clog << "[opendlv-device-camera-ueye]: Setting frame rate: " << ((IS_SUCCESS == retCode) ? "succeeded" : "failed") << ", FPS = " << newFPS << std::endl;
-
-                double disable{0};
-                double enable{1};
-                is_SetAutoParameter(capture, IS_SET_ENABLE_AUTO_FRAMERATE, &disable, 0);
-                is_SetAutoParameter(capture, IS_SET_ENABLE_AUTO_GAIN, &enable, 0);
-                is_SetAutoParameter(capture, IS_SET_ENABLE_AUTO_SENSOR_GAIN, &enable, 0);
-                is_SetAutoParameter(capture, IS_SET_ENABLE_AUTO_SENSOR_SHUTTER, &disable, 0);
-                is_SetAutoParameter(capture, IS_SET_ENABLE_AUTO_SENSOR_WHITEBALANCE,&enable,0);
-                is_SetAutoParameter(capture, IS_SET_ENABLE_AUTO_SHUTTER, &disable, 0);
-                is_SetAutoParameter(capture, IS_SET_ENABLE_AUTO_WHITEBALANCE, &enable, 0);
-            }
-
-            // Initialize shared memory.
-            std::unique_ptr<cluon::SharedMemory> sharedMemoryI420(new cluon::SharedMemory{NAME_I420, WIDTH * HEIGHT * 3/2});
-            if (!sharedMemoryI420 || !sharedMemoryI420->valid()) {
-                std::cerr << "[opendlv-device-camera-ueye]: Failed to create shared memory '" << NAME_I420 << "'." << std::endl;
-                return retCode = 1;
-            }
-
-            std::unique_ptr<cluon::SharedMemory> sharedMemoryARGB(new cluon::SharedMemory{NAME_ARGB, WIDTH * HEIGHT * 4});
-            if (!sharedMemoryARGB || !sharedMemoryARGB->valid()) {
-                std::cerr << "[opendlv-device-camera-ueye]: Failed to create shared memory '" << NAME_ARGB << "'." << std::endl;
-                return retCode = 1;
-            }
-
-            if ( (sharedMemoryI420 && sharedMemoryI420->valid()) &&
-                 (sharedMemoryARGB && sharedMemoryARGB->valid()) ) {
-                std::clog << "[opendlv-device-camera-ueye]: Data from uEye camera available in I420 format in shared memory '" << sharedMemoryI420->name() << "' (" << sharedMemoryI420->size() << ") and in ARGB format in shared memory '" << sharedMemoryARGB->name() << "' (" << sharedMemoryARGB->size() << ")." << std::endl;
-
-                // Accessing the low-level X11 data display.
-                Display* display{nullptr};
-                Visual* visual{nullptr};
-                Window window{0};
-                XImage* ximage{nullptr};
-                if (VERBOSE) {
-                    display = XOpenDisplay(NULL);
-                    visual = DefaultVisual(display, 0);
-                    window = XCreateSimpleWindow(display, RootWindow(display, 0), 0, 0, WIDTH, HEIGHT, 1, 0, 0);
-                    sharedMemoryARGB->lock();
-                    {
-                        ximage = XCreateImage(display, visual, 24, ZPixmap, 0, sharedMemoryARGB->data(), WIDTH, HEIGHT, 32, 0);
-                    }
-                    sharedMemoryARGB->unlock();
-                    XMapWindow(display, window);
-                }
-
-                while (!cluon::TerminateHandler::instance().isTerminated.load()) {
-                    if (IS_SUCCESS == is_FreezeVideo(capture, IS_WAIT)) {
-                        uint8_t *ueyeImagePtr{nullptr};
-                        if (IS_SUCCESS == is_GetImageMem(capture, (void**)&(ueyeImagePtr))) {
-                            cluon::data::TimeStamp ts{cluon::time::now()};
-                            // Transform data as I420 in sharedMemoryI420.
-                            sharedMemoryI420->lock();
-                            sharedMemoryI420->setTimeStamp(ts);
-                            {
-                                libyuv::UYVYToI420(ueyeImagePtr, WIDTH * 2 /* 2*WIDTH for YUYV 422*/,
-                                                   reinterpret_cast<uint8_t*>(sharedMemoryI420->data()), WIDTH,
-                                                   reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT)), WIDTH/2,
-                                                   reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT + ((WIDTH * HEIGHT) >> 2))), WIDTH/2,
-                                                   WIDTH, HEIGHT);
-                            }
-                            sharedMemoryI420->unlock();
-
-                            sharedMemoryARGB->lock();
-                            sharedMemoryARGB->setTimeStamp(ts);
-                            {
-                                libyuv::I420ToARGB(reinterpret_cast<uint8_t*>(sharedMemoryI420->data()), WIDTH,
-                                                   reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT)), WIDTH/2,
-                                                   reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT + ((WIDTH * HEIGHT) >> 2))), WIDTH/2,
-                                                   reinterpret_cast<uint8_t*>(sharedMemoryARGB->data()), WIDTH * 4, WIDTH, HEIGHT);
-
-                                if (VERBOSE) {
-                                    XPutImage(display, window, DefaultGC(display, 0), ximage, 0, 0, 0, 0, WIDTH, HEIGHT);
-                                }
-                            }
-                            sharedMemoryARGB->unlock();
-
-                            sharedMemoryI420->notifyAll();
-                            sharedMemoryARGB->notifyAll();
-                        }
-                    }
-                }
-
-                if (VERBOSE) {
-                    XCloseDisplay(display);
-                }
-            }
-
-            is_FreeImageMem(capture, imageMemory, imageMemoryID);
-            is_ExitCamera(capture);
+        PxLCamera pxLCamera(0);
+        PXL_RETURN_CODE rc;
+        PXL_ROI roi;
+        rc = pxLCamera.getRoiValue(&roi);
+        if (!API_SUCCESS(rc)) {
+          std::cerr << "error!";
         }
+        const uint32_t WIDTH{static_cast<uint32_t>(roi.m_width)};
+        const uint32_t HEIGHT{static_cast<uint32_t>(roi.m_height)};
+
+        float currentValue;
+        pxLCamera.getValue(FEATURE_PIXEL_FORMAT, &currentValue);
+        std::cout << "Current pixel format: " << currentValue << std::endl; // PIXEL_FORMAT_BAYER8_RGGB      7
+
+        auto image_size = pxLCamera.getImageSize();
+        std::unique_ptr<uint8_t []> buffer = std::make_unique<uint8_t []>(image_size);
+        // FIXME easy 20180331 - x265 ffmpeg only works at 1920x1080. Need to manually set ROI first.
+
+        rc = pxLCamera.play();
+
+
+        // Initialize shared memory.
+        std::unique_ptr<cluon::SharedMemory> sharedMemoryI420(new cluon::SharedMemory{NAME_I420, WIDTH * HEIGHT * 3/2});
+        if (!sharedMemoryI420 || !sharedMemoryI420->valid()) {
+            std::cerr << "[opendlv-device-camera-ueye]: Failed to create shared memory '" << NAME_I420 << "'." << std::endl;
+            return retCode = 1;
+        }
+
+        std::unique_ptr<cluon::SharedMemory> sharedMemoryARGB(new cluon::SharedMemory{NAME_ARGB, WIDTH * HEIGHT * 4});
+        if (!sharedMemoryARGB || !sharedMemoryARGB->valid()) {
+            std::cerr << "[opendlv-device-camera-ueye]: Failed to create shared memory '" << NAME_ARGB << "'." << std::endl;
+            return retCode = 1;
+        }
+
+        if ( (sharedMemoryI420 && sharedMemoryI420->valid()) &&
+             (sharedMemoryARGB && sharedMemoryARGB->valid()) ) {
+            std::clog << "[opendlv-device-camera-ueye]: Data from uEye camera available in I420 format in shared memory '" << sharedMemoryI420->name() << "' (" << sharedMemoryI420->size() << ") and in ARGB format in shared memory '" << sharedMemoryARGB->name() << "' (" << sharedMemoryARGB->size() << ")." << std::endl;
+
+            // Accessing the low-level X11 data display.
+            Display* display{nullptr};
+            Visual* visual{nullptr};
+            Window window{0};
+            XImage* ximage{nullptr};
+            if (VERBOSE) {
+                display = XOpenDisplay(NULL);
+                visual = DefaultVisual(display, 0);
+                window = XCreateSimpleWindow(display, RootWindow(display, 0), 0, 0, WIDTH, HEIGHT, 1, 0, 0);
+                sharedMemoryARGB->lock();
+                {
+                    ximage = XCreateImage(display, visual, 24, ZPixmap, 0, sharedMemoryARGB->data(), WIDTH, HEIGHT, 32, 0);
+                }
+                sharedMemoryARGB->unlock();
+                XMapWindow(display, window);
+            }
+
+            while (!cluon::TerminateHandler::instance().isTerminated.load()) {
+                    uint8_t *ueyeImagePtr{buffer.get()};
+                    rc = pxLCamera.getNextFrame(image_size, buffer.get());
+                    if (API_SUCCESS(rc)) {
+                        cluon::data::TimeStamp ts{cluon::time::now()};
+                        // Transform data as I420 in sharedMemoryI420.
+                        sharedMemoryI420->lock();
+                        sharedMemoryI420->setTimeStamp(ts);
+                        {
+                            libyuv::I422ToI420(reinterpret_cast<uint8_t*>(ueyeImagePtr), WIDTH,
+                                               reinterpret_cast<uint8_t*>(ueyeImagePtr+(WIDTH * HEIGHT)), WIDTH/2,
+                                               reinterpret_cast<uint8_t*>(ueyeImagePtr+(WIDTH * HEIGHT + ((WIDTH * HEIGHT) >> 2))), WIDTH/2,
+                                               reinterpret_cast<uint8_t*>(sharedMemoryI420->data()), WIDTH,
+                                               reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT)), WIDTH/2,
+                                               reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT + ((WIDTH * HEIGHT) >> 2))), WIDTH/2,
+                                               WIDTH, HEIGHT);
+                        }
+                        sharedMemoryI420->unlock();
+
+                        sharedMemoryARGB->lock();
+                        sharedMemoryARGB->setTimeStamp(ts);
+                        {
+                            libyuv::I420ToARGB(reinterpret_cast<uint8_t*>(sharedMemoryI420->data()), WIDTH,
+                                               reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT)), WIDTH/2,
+                                               reinterpret_cast<uint8_t*>(sharedMemoryI420->data()+(WIDTH * HEIGHT + ((WIDTH * HEIGHT) >> 2))), WIDTH/2,
+                                               reinterpret_cast<uint8_t*>(sharedMemoryARGB->data()), WIDTH * 4, WIDTH, HEIGHT);
+
+                            if (VERBOSE) {
+                                XPutImage(display, window, DefaultGC(display, 0), ximage, 0, 0, 0, 0, WIDTH, HEIGHT);
+                            }
+                        }
+                        sharedMemoryARGB->unlock();
+
+                        sharedMemoryI420->notifyAll();
+                        sharedMemoryARGB->notifyAll();
+                }
+            }
+
+            if (VERBOSE) {
+                XCloseDisplay(display);
+            }
+        }
+
+        // Free camera.
+        if (pxLCamera.streaming())
+          pxLCamera.stop();
     }
     return retCode;
 }

@@ -76,9 +76,14 @@ find_package(Libyuv REQUIRED)
 include_directories(SYSTEM ${YUV_INCLUDE_DIRS})
 set(LIBRARIES ${LIBRARIES} ${YUV_LIBRARIES})
 
-find_package(LibuEye REQUIRED)
-include_directories(SYSTEM ${LIBUEYE_INCLUDE_DIRS})
-set(LIBRARIES ${LIBRARIES} ${LIBUEYE_LIBRARIES})
+#USE_PIXELINK_SDK
+find_package(PIXELINK_SDK REQUIRED)
+include_directories(SYSTEM ${PIXELINK_SDK_INCLUDE_DIRS})
+set(LIBRARIES ${LIBRARIES} ${PIXELINK_SDK_LIBS})
+LINK_DIRECTORIES(${PIXELINK_SDK_LIBRARY_DIRS})
+if (UNIX)
+    ADD_DEFINITIONS(-DPIXELINK_LINUX)
+endif (UNIX)
 
 find_package(X11 REQUIRED)
 include_directories(SYSTEM ${X11_INCLUDE_DIR})
@@ -87,7 +92,7 @@ set(LIBRARIES ${LIBRARIES} ${X11_X11_LIB})
 ################################################################################
 # Create executable.
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
-add_executable(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/src/${PROJECT_NAME}.cpp ${CMAKE_BINARY_DIR}/cluon-complete.hpp)
+add_executable(${PROJECT_NAME} ${CMAKE_CURRENT_SOURCE_DIR}/src/${PROJECT_NAME}.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/pixelink/camera.cpp ${CMAKE_BINARY_DIR}/cluon-complete.hpp)
 target_link_libraries(${PROJECT_NAME} ${LIBRARIES})
 
 ################################################################################

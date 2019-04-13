@@ -1,3 +1,5 @@
+./opendlv-device-camera-ueye --width=800 --height=600 --pixel_clock=10 --freq=20 --verbose
+
 ## OpenDLV Microservice to interface with IDS uEye cameras
 
 This repository provides source code to interface with IDS uEye cameras
