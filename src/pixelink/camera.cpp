@@ -26,6 +26,15 @@ using namespace std;
  *  Public members
  */
 
+namespace {
+//constexpr float 			FLIP[2]= {1.0f,1.0f};
+constexpr float 			GAMMA = 2.2f;
+constexpr float 			GAIN = 1.0f;
+constexpr float 			SATURATION = 100.0f;
+constexpr float 			RED = 1.0f;
+constexpr float 			GREEN = 1.0f;
+constexpr float 			BLUE = 4.0f;
+}  // namespace
 
 PxLCamera::PxLCamera (ULONG serialNum)
 : m_serialNum(0)
@@ -43,6 +52,26 @@ PxLCamera::PxLCamera (ULONG serialNum)
 		throw PxLError(rc);
 	}
 	m_serialNum = serialNum;
+
+  {
+    // FIXME: make below a camera config options interface.
+//    rc = setHardwareTrigger(false);   // FIXME: disable hardware trigger set camera to a slow frame rate mode.
+//    assert(API_SUCCESS(rc));
+    rc = setFlip(true, true);
+    assert(API_SUCCESS(rc));
+    rc = setGammaValues(GAMMA);
+    assert(API_SUCCESS(rc));
+    rc = setSaturationValues(SATURATION);
+    assert(API_SUCCESS(rc));
+    rc = setContinuousAuto(FEATURE_EXPOSURE, true);   // Auto exposure
+    assert(API_SUCCESS(rc));
+    rc = setWhiteBalanceValues(RED, GREEN, BLUE);
+    assert(API_SUCCESS(rc));
+    rc = setGainValues(GAIN);
+    assert(API_SUCCESS(rc));
+    rc = setPixelAddressValue(PIXEL_ADDRESSING_MODE_BIN, PIXEL_ADDRESSING_VALUE_NONE);
+    assert(API_SUCCESS(rc));
+  }
 
 	// Set the preview window to a fixed size.
 	sprintf (title, "Preview - Camera %d", m_serialNum);
@@ -487,6 +516,107 @@ PXL_RETURN_CODE PxLCamera::getWhiteBalanceValues (float* red, float* green, floa
     *blue  = featureValues[2];
 
     return ApiSuccess;
+}
+
+PXL_RETURN_CODE PxLCamera::setGainValues (float gain)
+{
+  PXL_RETURN_CODE rc = ApiSuccess;
+
+  STOP_STREAM_IF_REQUIRED(FEATURE_WHITE_SHADING);
+
+  rc = PxLSetFeature(m_hCamera, FEATURE_GAIN, FEATURE_FLAG_MANUAL, 1, &gain);
+
+  return rc;
+}
+
+PXL_RETURN_CODE PxLCamera::setGammaValues (float gamma)
+{
+  PXL_RETURN_CODE rc = ApiSuccess;
+
+  STOP_STREAM_IF_REQUIRED(FEATURE_WHITE_SHADING);
+
+  rc = PxLSetFeature(m_hCamera, FEATURE_GAMMA, FEATURE_FLAG_MANUAL, 1, &gamma);
+
+  return rc;
+}
+
+PXL_RETURN_CODE PxLCamera::setSaturationValues (float saturation)
+{
+  PXL_RETURN_CODE rc = ApiSuccess;
+
+  STOP_STREAM_IF_REQUIRED(FEATURE_WHITE_SHADING);
+
+  rc = PxLSetFeature(m_hCamera, FEATURE_SATURATION, FEATURE_FLAG_MANUAL, 1, &saturation);
+
+  return rc;
+}
+
+// =================================================================================================
+// Disable hardware triggering
+// =================================================================================================
+PXL_RETURN_CODE PxLCamera::DisableTriggering()
+{
+  U32 flags;
+  U32 numParams = 5;
+  float params[5];
+  PXL_RETURN_CODE rc;
+
+  // Read current settings
+  PxLGetFeature(m_hCamera, FEATURE_TRIGGER, &flags, &numParams, &params[0]);
+  //ASSERT(API_SUCCESS(rc));
+  //ASSERT(5 == numParams);
+
+  // Disable triggering
+  flags = ENABLE_FEATURE(flags, false);
+
+  rc = PxLSetFeature(m_hCamera, FEATURE_TRIGGER, flags, numParams, &params[0]);
+  //ASSERT(API_SUCCESS(rc));
+  return rc;
+}
+
+// =================================================================================================
+// Set up the camera for triggering, and, enable triggering.
+// =================================================================================================
+PXL_RETURN_CODE PxLCamera::SetTriggering(int mode, int triggerType, int polarity, float delay, float param)
+{
+  U32 flags;
+  U32 numParams = FEATURE_TRIGGER_NUM_PARAMS;
+  float params[FEATURE_TRIGGER_NUM_PARAMS];
+  PXL_RETURN_CODE rc;
+
+  DisableTriggering();
+
+  // Read current settings
+  rc = PxLGetFeature(m_hCamera, FEATURE_TRIGGER, &flags, &numParams, &params[0]);
+  assert(API_SUCCESS(rc));
+  assert(5 == numParams);
+
+  // Very important step: Enable triggering by clearing the FEATURE_FLAG_OFF bit
+  flags = ENABLE_FEATURE(flags, true);
+
+  // Assign the new values...
+  params[FEATURE_TRIGGER_PARAM_MODE]	= (float)mode;
+  params[FEATURE_TRIGGER_PARAM_TYPE]	= (float)triggerType;
+  params[FEATURE_TRIGGER_PARAM_POLARITY]	= (float)polarity;
+  params[FEATURE_TRIGGER_PARAM_DELAY]	= delay;
+  params[FEATURE_TRIGGER_PARAM_PARAMETER]	= param;
+
+  // ... and write them to the camera
+  rc = PxLSetFeature(m_hCamera, FEATURE_TRIGGER, flags, numParams, &params[0]);
+  assert(API_SUCCESS(rc));
+  return rc;
+}
+
+PXL_RETURN_CODE PxLCamera::setHardwareTrigger (bool enable)
+{
+  return enable ?
+    SetTriggering(TRIGGER_MODE_0,	// Mode 0 Triggering
+                  TRIGGER_TYPE_HARDWARE,
+                  POLARITY_ACTIVE_LOW,
+                  0.0,						// no delay
+                  0)							// unused for Mode 0
+                  :
+    DisableTriggering();
 }
 
 PXL_RETURN_CODE PxLCamera::setWhiteBalanceValues (float red, float green, float blue)

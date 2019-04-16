@@ -75,6 +75,10 @@ public:
     PXL_RETURN_CODE getRoiValue (PXL_ROI* roi);
     PXL_RETURN_CODE setRoiValue (PXL_ROI &roi);
     uint32_t getImageSize ();
+    PXL_RETURN_CODE setGammaValues (float gamma);
+    PXL_RETURN_CODE setGainValues (float gain);
+    PXL_RETURN_CODE setSaturationValues (float saturation);
+    PXL_RETURN_CODE setHardwareTrigger (bool enable);
     PXL_RETURN_CODE getWhiteBalanceRange (float* min, float* max);
     PXL_RETURN_CODE getWhiteBalanceValues (float* red, float* green, float* blue);
     PXL_RETURN_CODE setWhiteBalanceValues (float red, float green, float blue);
@@ -85,6 +89,8 @@ public:
     PXL_RETURN_CODE getNextFrame (ULONG bufferSize, void*pFrame);
 
 private:
+    PXL_RETURN_CODE DisableTriggering();
+    PXL_RETURN_CODE SetTriggering(int mode, int triggerType, int polarity, float delay, float param);
     PXL_RETURN_CODE getFlags (ULONG feature, ULONG *flags);
     bool   requiresStreamStop (ULONG feature);
     ULONG  imageSize ();
