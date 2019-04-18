@@ -132,7 +132,8 @@ int32_t main(int32_t argc, char **argv) {
             while (!cluon::TerminateHandler::instance().isTerminated.load()) {
                 rc = pxLCamera.getNextFrame(image_size, buffer.get());
 
-                cv::cvtColor(cv_frame_bayerbg, cv_frame_bgr, CV_BayerBG2BGR); //CV_BayerRG2BGRA
+                // FIXME: set color convert based on pixelink flip values, if not flipped use CV_BayerBG2BGR.
+                cv::cvtColor(cv_frame_bayerbg, cv_frame_bgr, CV_BayerBG2RGB); //CV_BayerRG2BGRA
                 if (API_SUCCESS(rc)) {
                     cluon::data::TimeStamp ts{cluon::time::now()};
                     // Transform data as I420 in sharedMemoryI420.
